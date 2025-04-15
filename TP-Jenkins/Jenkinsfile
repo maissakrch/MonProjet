@@ -1,0 +1,71 @@
+pipeline {
+    agent any
+
+    environment {
+        SUM_PY_PATH = './sum.py'
+        DIR_PATH = '.'
+        TEST_FILE_PATH = './test_variables.txt'
+    }
+
+    stages {
+        stage('Build') {
+            steps {
+                dir("${DIR_PATH}") {
+                    sh "docker build -t mon_image_sum ."
+                }
+            }
+        }
+
+        stage('Run') {
+            steps {
+                script {
+                    def output = sh(script: "docker run -d mon_image_sum", returnStdout: true).trim()
+                    env.CONTAINER_ID = output
+                    echo "Conteneur lancé avec l'ID : ${env.CONTAINER_ID}"
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                script {
+                    def testLines = readFile("${TEST_FILE_PATH}").split('\n')
+                    for (line in testLines) {
+                        def vars = line.split(' ')
+                        def arg1 = vars[0]
+                        def arg2 = vars[1]
+                        def expectedSum = vars[2].toFloat()
+
+                        def output = sh(script: "docker exec ${env.CONTAINER_ID} python /app/sum.py ${arg1} ${arg2}", returnStdout: true).trim()
+                        def result = output.toFloat()
+
+                        if (result == expectedSum) {
+                            echo "✅ Test OK : ${arg1} + ${arg2} = ${expectedSum}"
+                        } else {
+                            error "❌ Test FAIL : ${arg1} + ${arg2} a donné ${result} (attendu ${expectedSum})"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                script {
+                    sh "docker login -u VOTRE_USER_DOCKERHUB -p VOTRE_MDP"
+                    sh "docker tag mon_image_sum VOTRE_USER_DOCKERHUB/mon_image_sum"
+                    sh "docker push VOTRE_USER_DOCKERHUB/mon_image_sum"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                sh "docker stop ${env.CONTAINER_ID} || true"
+                sh "docker rm ${env.CONTAINER_ID} || true"
+            }
+        }
+    }
+}
